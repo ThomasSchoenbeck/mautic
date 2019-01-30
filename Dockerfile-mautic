@@ -1,0 +1,93 @@
+FROM myownimage
+
+USER root
+
+# Install PHP extensions
+RUN apk upgrade --update && apk add -y \
+    # cron \
+    git \
+    wget \
+    libjpeg-turbo-dev \
+      libltdl \
+      libmcrypt-dev \
+      libpng-dev \
+      imap-dev \
+      krb5-dev \
+      openssl-dev \
+    # libc-client-dev \
+    # libicu-dev \
+    # libkrb5-dev \
+    # libssl-dev \
+    # libz-dev \
+    unzip \
+    zip \
+    && apk add --no-cache --virtual .build-deps \
+        # $PHPIZE_DEPS \
+        zlib-dev \
+        icu-dev \
+        g++ \
+        libzip-dev \
+    # && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
+    && rm -rf /var/lib/apt/lists/* 
+    # && rm /etc/cron.daily/*
+
+RUN docker-php-ext-configure imap --with-imap --with-imap-ssl --with-kerberos \
+    && docker-php-ext-configure opcache --enable-opcache \
+    && docker-php-ext-install imap intl mbstring mysqli pdo_mysql zip opcache \
+    && docker-php-ext-enable imap intl mbstring mysqli pdo_mysql zip opcache \
+    && apk del .build-deps
+
+# Install composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/bin --filename=composer
+
+# Define Mautic volume to persist data
+VOLUME /var/www/html
+
+# Define Mautic version and expected SHA1 signature
+ENV MAUTIC_VERSION=2.15.0 \
+    MAUTIC_SHA1=b07bd42bb092cc96785d2541b33700b55f74ece7 \
+# By default enable cron jobs
+    MAUTIC_RUN_CRON_JOBS=true \
+# Setting an root user for test
+    MAUTIC_DB_HOST="localhost:32768" \
+    MAUTIC_DB_USER=mautic \
+    MAUTIC_DB_NAME=mautic \
+    MAUTIC_DB_PASSWORD=mautic \
+    MYSQL_ROOT_PASSWORD=admin \
+    MYSQL_PORT_3306_TCP=3306
+
+
+COPY 2.15.0.zip /mautic.zip
+# Download package and extract to web volume
+# RUN curl -o mautic.zip -SL https://github.com/mautic/mautic/releases/download/${MAUTIC_VERSION}/${MAUTIC_VERSION}.zip \
+	# && echo "$MAUTIC_SHA1 *mautic.zip" | sha1sum -c - \
+
+# RUN addgroup -S mautic && adduser -S -G mautic mautic \
+RUN chmod 777 /mautic.zip \
+    && mkdir -p /var/www/html/mautic \
+	&& unzip /mautic.zip -d /var/www/html/mautic \
+	&& rm /mautic.zip \
+	&& chown -R www-data:www-data /var/www/html/mautic /var/log \
+  && chmod -R 777 /var/www/html /var/log /etc
+
+# Copy init scripts and custom .htaccess
+COPY --chown=www-data:www-data docker-entrypoint.sh /entrypoint.sh
+COPY makeconfig.php /makeconfig.php
+COPY makedb.php /makedb.php
+COPY mautic.crontab /etc/cron.d/mautic
+COPY mautic-php.ini /usr/local/etc/php/conf.d/mautic-php.ini
+COPY tester.php /var/www/html
+
+RUN ls -la /var/www/html/mautic
+#  && pwd && whoami && echo "#!/bin/sh -ex pwd && whoami && ./usr/mautic/entrypoint.sh" > /usr/mautic/shell-script.sh
+
+# WORKDIR /var/www/html
+
+# USER www-data
+
+# Apply necessary permissions
+# RUN ["chmod", "777", "/entrypoint.sh"]
+RUN ["chmod", "+x", "/entrypoint.sh"]
+# ENTRYPOINT ["sh", "/entrypoint.sh"]
+
+CMD ["php-fpm"]
